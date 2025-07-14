@@ -62,6 +62,22 @@ def format_time(seconds):
     m, _ = divmod(rem, 60)
     return f"{d}d {h}hr {m}min" if d else f"{h}hr {m}min" if h else f"{m}min" if m else "Less than a minute"
 
+@bot.event
+async def on_ready():
+    print(f"Bot is ready. Logged in as {bot.user}")
+    for guild in bot.guilds:
+        if str(guild.id) not in activated_servers:
+            activated_servers.append(str(guild.id))
+    with open(ACTIVATION_FILE, "w") as f:
+        json.dump(activated_servers, f)
+
+@bot.event
+async def on_guild_join(guild):
+    if str(guild.id) not in activated_servers:
+        activated_servers.append(str(guild.id))
+        with open(ACTIVATION_FILE, "w") as f:
+            json.dump(activated_servers, f)
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def help(ctx):
@@ -315,31 +331,54 @@ async def reroll(ctx, message_id: int):
 
 
 @bot.command()
-@commands.has_permissions(administrator=True)
 async def deactivate(ctx):
+    if ctx.author.id != OWNER_ID:
+        return await ctx.send("Only the bot owner can use this command.")
+
     if str(ctx.guild.id) not in activated_servers:
         return await ctx.send("Bot is already deactivated in this server.")
+
     activated_servers.remove(str(ctx.guild.id))
     with open(ACTIVATION_FILE, "w") as f:
         json.dump(activated_servers, f)
+
+    # Cancel ongoing setup or countdown if any
+    setup_task = active_setups.pop(ctx.guild.id, None)
+    if setup_task:
+        setup_task.cancel()
+
+    countdown_task = active_countdowns.pop(ctx.guild.id, None)
+    if countdown_task:
+        countdown_task.cancel()
+
+    # Delete any active giveaway embed if still exists
+    for msg_id, msg in list(giveaway_messages.items()):
+        if msg.guild.id == ctx.guild.id:
+            try: await msg.delete()
+            except: pass
+            giveaway_entries.pop(msg_id, None)
+            giveaway_messages.pop(msg_id, None)
+            giveaway_winners.pop(msg_id, None)
+            giveaway_ended_embeds.pop(msg_id, None)
+            rerolled_history.pop(msg_id, None)
+
     await ctx.send("Bot has been deactivated in this server.")
 
+
 @bot.command()
-@commands.has_permissions(administrator=True)
 async def reactivate(ctx):
+    if ctx.author.id != OWNER_ID:
+        return await ctx.send("Only the bot owner can use this command.")
+
     if str(ctx.guild.id) in activated_servers:
-        return await ctx.send("Bot is already active.")
+        return await ctx.send("Bot is already active in this server.")
+
     activated_servers.append(str(ctx.guild.id))
     with open(ACTIVATION_FILE, "w") as f:
         json.dump(activated_servers, f)
-    await ctx.send("Bot has been reactivated.")
 
-@bot.event
-async def on_guild_join(guild):
-    if str(guild.id) not in activated_servers:
-        activated_servers.append(str(guild.id))
-        with open(ACTIVATION_FILE, "w") as f:
-            json.dump(activated_servers, f)
+    await ctx.send("Bot has been reactivated in this server.")
+
 
 # Flask keep-alive
 app = Flask('')
